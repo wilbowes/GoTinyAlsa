@@ -36,6 +36,17 @@ func (d *AlsaDevice) GetAudioStream(config pcm.Config, audioData chan []byte) er
 		return err
 	}
 
+	// Recover a send on a closed channel. Registered ONCE, outside the read
+	// loop: a defer inside an infinite loop never executes but pushes a new
+	// _defer record + closure every iteration — on a stream that runs for the
+	// process lifetime that retained ~46 bytes per period forever (~1MB/h at
+	// 160ms batches; the EchoMuse fleet heap leak, 2026-07-18).
+	defer func() {
+		if r := recover(); r != nil {
+			// Channel is probably closed!
+		}
+	}()
+
 	errorCount := 0
 	writeTimeout := time.Second * 5
 FrameReader:
@@ -48,11 +59,6 @@ FrameReader:
 			errorCount += 1
 			continue
 		}
-		defer func() {
-			if r := recover(); r != nil {
-				// Channel is probably closed!
-			}
-		}()
 		select {
 		// Snapshot before sending: the next PCM read reuses buffer.
 		case audioData <- bytes.Clone(buffer):
