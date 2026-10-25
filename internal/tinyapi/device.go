@@ -23,6 +23,27 @@ package tinyapi
 //     pthread_sigmask(SIG_SETMASK, &old, NULL);
 //     return r;
 // }
+//
+// // pcm_read with every signal blocked, the capture twin of the above.
+// //
+// // A blocking READI ioctl interrupted by a signal returns once ANY frames
+// // were copied, and pcm_read reports success regardless: the caller gets
+// // its whole buffer back with only the head freshly read and the tail
+// // still holding the previous read's bytes. A reader that counts the whole
+// // buffer then runs ahead of real time by the stale tail, and hands the
+// // same audio on twice. Measured on an Echo Dot 3rd gen over 23 h
+// // (EchoMuse, 2026-10-25): 295 such reads, each a 2560-frame buffer with
+// // 256 fresh frames, so the capture ledger ran 42.8 s "fast" against the
+// // wall clock (295 x 144 ms = 42.5 s) and the echo canceller's reference
+// // had to be re-paired at every one. Nothing was lost; audio was repeated.
+// static int em_pcm_read_whole(struct pcm *pcm, void *data, unsigned int count) {
+//     sigset_t all, old;
+//     sigfillset(&all);
+//     pthread_sigmask(SIG_BLOCK, &all, &old);
+//     int r = pcm_read(pcm, data, count);
+//     pthread_sigmask(SIG_SETMASK, &old, NULL);
+//     return r;
+// }
 import "C"
 import (
 	"errors"
@@ -97,7 +118,7 @@ func (d *PcmDevice) WaitUntilReady(timeout time.Duration) error {
 }
 
 func (d *PcmDevice) ReadFrames(buffer []byte, size int) error {
-	framesRead := C.uint(C.pcm_read(d.pcmDevice, unsafe.Pointer(&buffer[0]), C.uint(size)))
+	framesRead := C.uint(C.em_pcm_read_whole(d.pcmDevice, unsafe.Pointer(&buffer[0]), C.uint(size)))
 	if framesRead != 0 {
 		// Error occurred
 		return errors.New(fmt.Sprintf("couldn't read frames: %s", d.GetError()))
