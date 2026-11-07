@@ -73,6 +73,59 @@ FrameReader:
 	return nil
 }
 
+// GetAudioStreamChunked is GetAudioStream reading readFrames per pcm_read
+// and delivering deliverFrames per slice (a multiple of readFrames).
+//
+// GetAudioStream reads the whole ring buffer per call, so a read can only
+// complete once the ring is full: there is no headroom, and a reader that is
+// a moment late is lapped by the hardware. On MediaTek's memif that showed as
+// whole stretches of stale audio repeated with no error (pcm_read restarts on
+// EPIPE and carries on), which is harmless for a microphone feeding a wake
+// word and fatal for an echo reference that must stay aligned (EchoMuse,
+// donut 41C8, 2026-11-07). Reading a period at a time leaves the rest of the
+// ring as slack; delivery stays in the caller's batch size.
+func (d *AlsaDevice) GetAudioStreamChunked(config pcm.Config, readFrames, deliverFrames int, audioData chan []byte) error {
+	pcmDevice, err := tinyapi.PcmOpen(d.Card, d.Device, PCM_IN, config)
+	if err != nil {
+		return err
+	}
+	defer pcmDevice.Close()
+	bpf := pcmDevice.BytesPerFrame()
+	if readFrames <= 0 || deliverFrames < readFrames || deliverFrames%readFrames != 0 {
+		return errors.New("deliverFrames must be a positive multiple of readFrames")
+	}
+	chunk := make([]byte, readFrames*bpf)
+	out := make([]byte, 0, deliverFrames*bpf)
+
+	defer func() {
+		if r := recover(); r != nil {
+			// Channel is probably closed!
+		}
+	}()
+
+	errorCount := 0
+	writeTimeout := time.Second * 5
+	for {
+		if err := pcmDevice.ReadFrames(chunk, len(chunk)); err != nil {
+			if errorCount > ErrorTolerance {
+				return err
+			}
+			errorCount += 1
+			continue
+		}
+		out = append(out, chunk...)
+		if len(out) < cap(out) {
+			continue
+		}
+		select {
+		case audioData <- out:
+			out = make([]byte, 0, deliverFrames*bpf)
+		case <-time.After(writeTimeout):
+			return nil
+		}
+	}
+}
+
 // SendAudioStream plays the given audio data (usually wav) to the device
 func (d *AlsaDevice) SendAudioStream(audioData []byte) error {
 	pcmDevice, err := tinyapi.PcmOpen(d.Card, d.Device, PCM_OUT, d.DeviceConfig)
