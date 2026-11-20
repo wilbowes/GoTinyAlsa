@@ -106,6 +106,21 @@ func (d *AlsaDevice) GetAudioStreamChunked(config pcm.Config, readFrames, delive
 	errorCount := 0
 	writeTimeout := time.Second * 5
 	for {
+		// A pointer that runs ahead of the DMA reports a period ready before
+		// it is written, and a read the moment it says so returns stale ring
+		// contents with no error (MediaTek memif: 128ms of stale mic audio
+		// every ~2s, one stale loopback period a minute). Waiting for AvailMin
+		// keeps the read a period behind. A blocking read ignores the kernel's
+		// own avail_min, so the wait is here.
+		if margin := config.AvailMin; margin > readFrames {
+			for i := 0; i < 64; i++ {
+				avail, _, e := pcmDevice.HTimestamp()
+				if e != nil || int(avail) >= margin {
+					break
+				}
+				time.Sleep(time.Duration(readFrames) * time.Second / time.Duration(4*config.SampleRate))
+			}
+		}
 		if err := pcmDevice.ReadFrames(chunk, len(chunk)); err != nil {
 			if errorCount > ErrorTolerance {
 				return err

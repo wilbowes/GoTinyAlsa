@@ -105,6 +105,18 @@ func (d *PcmDevice) ReadFrames(buffer []byte, size int) error {
 	return nil
 }
 
+// HTimestamp returns the frames ready to read (or space to write) and the
+// time, in ns on the PCM's timestamp clock, at which the hardware pointer was
+// last updated.
+func (d *PcmDevice) HTimestamp() (uint, int64, error) {
+	var avail C.uint
+	var ts C.struct_timespec
+	if C.pcm_get_htimestamp(d.pcmDevice, &avail, &ts) != 0 {
+		return 0, 0, errors.New("pcm_get_htimestamp failed")
+	}
+	return uint(avail), int64(ts.tv_sec)*1e9 + int64(ts.tv_nsec), nil
+}
+
 func (d *PcmDevice) WriteFrames(buffer []byte, size int) error {
 	framesWritten := C.uint(C.em_pcm_write_whole(d.pcmDevice, unsafe.Pointer(&buffer[0]), C.uint(size)))
 	if framesWritten != 0 {

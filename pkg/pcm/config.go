@@ -16,4 +16,9 @@ type Config struct {
 	StartThreshold   int
 	StopThreshold    int
 	SilenceThreshold int
+	// AvailMin is GetAudioStreamChunked's read margin: each read waits until
+	// this many frames are ready, so the reader stays behind the hardware
+	// pointer. Not passed to pcm_config: a blocking read ignores the kernel's
+	// avail_min, and the field's offset depends on the device's tinyalsa.
+	AvailMin int
 }
